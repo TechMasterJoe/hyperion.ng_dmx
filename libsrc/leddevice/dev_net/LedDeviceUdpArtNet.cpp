@@ -8,6 +8,8 @@
 
 #include <QtEndian>
 #include <QHostInfo>
+#include <QJsonArray>
+#include <QJsonValue>
 
 #include <utils/NetUtils.h>
 
@@ -29,6 +31,107 @@ LedDeviceUdpArtNet::LedDeviceUdpArtNet(const QJsonObject &deviceConfig)
 LedDevice* LedDeviceUdpArtNet::construct(const QJsonObject &deviceConfig)
 {
 	return new LedDeviceUdpArtNet(deviceConfig);
+}
+
+bool LedDeviceUdpArtNet::parseCustomFixtures(const QJsonObject &deviceConfig)
+{
+	_fixtures.clear();
+	_ledFixtureMap.clear();
+	_useCustomFixtures = false;
+
+	if (!deviceConfig.contains("customFixtures") || !deviceConfig["customFixtures"].isArray())
+	{
+		return true; // not an error, just not using custom fixtures
+	}
+
+	QJsonArray fixturesArray = deviceConfig["customFixtures"].toArray();
+	if (fixturesArray.isEmpty())
+	{
+		return true;
+	}
+
+	for (const QJsonValue& val : fixturesArray)
+	{
+		if (!val.isObject())
+			continue;
+
+		QJsonObject obj = val.toObject();
+		DmxFixture fixture;
+		fixture.name = obj["name"].toString("Unnamed");
+		fixture.channelCount = obj["channelCount"].toInt(3);
+		if (fixture.channelCount < 1 || fixture.channelCount > 512)
+			fixture.channelCount = 3;
+
+		// Prefer explicit roles array
+		if (obj.contains("channelRoles") && obj["channelRoles"].isArray())
+		{
+			QJsonArray roles = obj["channelRoles"].toArray();
+			for (const QJsonValue& r : roles)
+			{
+				fixture.roles.push_back(r.toString().toUpper());
+			}
+		}
+		// Fallback: compact string like "RGBH"
+		else if (obj.contains("channelConfig"))
+		{
+			QString cfg = obj["channelConfig"].toString().toUpper();
+			for (QChar c : cfg)
+			{
+				fixture.roles.push_back(QString(c));
+			}
+			fixture.channelCount = static_cast<int>(fixture.roles.size());
+		}
+
+		// Ensure roles vector matches channelCount
+		while (static_cast<int>(fixture.roles.size()) < fixture.channelCount)
+		{
+			fixture.roles.push_back("L");
+		}
+		if (static_cast<int>(fixture.roles.size()) > fixture.channelCount)
+		{
+			fixture.roles.resize(fixture.channelCount);
+		}
+
+		// Fixed values
+		if (obj.contains("fixedValues") && obj["fixedValues"].isArray())
+		{
+			QJsonArray fixed = obj["fixedValues"].toArray();
+			for (const QJsonValue& f : fixed)
+			{
+				fixture.fixedValues.push_back(static_cast<uint8_t>(qBound(0, f.toInt(0), 255)));
+			}
+		}
+		while (fixture.fixedValues.size() < static_cast<size_t>(fixture.channelCount))
+		{
+			fixture.fixedValues.push_back(0);
+		}
+
+		_fixtures.push_back(fixture);
+		Debug(_log, "Loaded custom fixture '%s' with %d channels", QSTRING_CSTR(fixture.name), fixture.channelCount);
+	}
+
+	if (_fixtures.empty())
+	{
+		return true;
+	}
+
+	_useCustomFixtures = true;
+
+	// Optional per-LED fixture index map
+	if (deviceConfig.contains("ledFixtureMap") && deviceConfig["ledFixtureMap"].isArray())
+	{
+		QJsonArray map = deviceConfig["ledFixtureMap"].toArray();
+		for (const QJsonValue& m : map)
+		{
+			int idx = m.toInt(0);
+			if (idx < 0 || idx >= static_cast<int>(_fixtures.size()))
+				idx = 0;
+			_ledFixtureMap.push_back(idx);
+		}
+	}
+
+	Info(_log, "Custom DMX fixtures enabled: %d fixture type(s)", static_cast<int>(_fixtures.size()));
+	return true;
 }
 
 bool LedDeviceUdpArtNet::init(const QJsonObject &deviceConfig)
@@ -62,6 +165,12 @@ bool LedDeviceUdpArtNet::init(const QJsonObject &deviceConfig)
 	{
 		Error(_log, "channelsPerFixture must be at least %d. Setting to %d.", _ledChannelsPerFixture, _ledChannelsPerFixture);
 		_artnet_channelsPerFixture = _ledChannelsPerFixture;
+	}
+
+	// Parse optional custom fixtures (does not fail init if absent)
+	if (!parseCustomFixtures(deviceConfig))
+	{
+		return false;
 	}
 
 	return true;
@@ -103,6 +212,57 @@ void LedDeviceUdpArtNet::prepare(unsigned this_universe, unsigned this_sequence,
 
 }
 
+void LedDeviceUdpArtNet::writeFixtureChannels(uint8_t* dmxData, int& dmxIdx, const ColorRgb& color, const DmxFixture& fixture)
+{
+	ColorRgbw rgbw;
+	bool hasWhite = false;
+	for (const QString& role : fixture.roles)
+	{
+		if (role == "W")
+		{
+			hasWhite = true;
+			break;
+		}
+	}
+
+	if (hasWhite && _whiteAlgorithm != RGBW::WhiteAlgorithm::WHITE_OFF)
+	{
+		RGBW::Rgb_to_Rgbw(color, &rgbw, _whiteAlgorithm);
+	}
+	else
+	{
+		rgbw.red = color.red;
+		rgbw.green = color.green;
+		rgbw.blue = color.blue;
+		rgbw.white = 0;
+	}
+
+	for (int i = 0; i < fixture.channelCount && dmxIdx < DMX_MAX; ++i)
+	{
+		const QString& role = fixture.roles[static_cast<size_t>(i)];
+		uint8_t value = 0;
+
+		if (role == "R")
+			value = rgbw.red;
+		else if (role == "G")
+			value = rgbw.green;
+		else if (role == "B")
+			value = rgbw.blue;
+		else if (role == "W")
+			value = rgbw.white;
+		else if (role == "H")
+			value = 255;
+		else if (role == "L")
+			value = 0;
+		else if (role == "F" && i < static_cast<int>(fixture.fixedValues.size()))
+			value = fixture.fixedValues[static_cast<size_t>(i)];
+		else
+			value = (i < static_cast<int>(fixture.fixedValues.size())) ? fixture.fixedValues[static_cast<size_t>(i)] : 0;
+
+		dmxData[dmxIdx++] = value;
+	}
+}
+
 int LedDeviceUdpArtNet::write(const QVector<ColorRgb> &ledValues)
 {
 	int retVal = 0;
@@ -121,10 +281,30 @@ int LedDeviceUdpArtNet::write(const QVector<ColorRgb> &ledValues)
 
 	memset(artnet_packet.raw, 0, sizeof(artnet_packet.raw));
 
+	int ledIndex = 0;
 	for (const ColorRgb& color : ledValues)
 	{
+		int channelsNeeded = _artnet_channelsPerFixture;
+		const DmxFixture* fixture = nullptr;
+
+		if (_useCustomFixtures && !_fixtures.empty())
+		{
+			int fixtureIdx = 0;
+			if (ledIndex < static_cast<int>(_ledFixtureMap.size()))
+				fixtureIdx = _ledFixtureMap[static_cast<size_t>(ledIndex)];
+			else if (!_ledFixtureMap.empty())
+				fixtureIdx = _ledFixtureMap.back();
+			// else default to fixture 0
+
+			if (fixtureIdx >= 0 && fixtureIdx < static_cast<int>(_fixtures.size()))
+			{
+				fixture = &_fixtures[static_cast<size_t>(fixtureIdx)];
+				channelsNeeded = fixture->channelCount;
+			}
+		}
+
 		// Check if this LED would overflow the DMX packet
-		if (dmxIdx + _artnet_channelsPerFixture > DMX_MAX)
+		if (dmxIdx + channelsNeeded > DMX_MAX)
 		{
 			// Send current packet before continuing
 			prepare(thisUniverse, _artnet_seq, dmxIdx);
@@ -139,23 +319,33 @@ int LedDeviceUdpArtNet::write(const QVector<ColorRgb> &ledValues)
 			dmxIdx = 0;
 		}
 
-		if (_whiteAlgorithm == RGBW::WhiteAlgorithm::WHITE_OFF)
+		if (fixture != nullptr)
 		{
-			artnet_packet.Data[dmxIdx++] = color.red;
-			artnet_packet.Data[dmxIdx++] = color.green;
-			artnet_packet.Data[dmxIdx++] = color.blue;
+			writeFixtureChannels(artnet_packet.Data, dmxIdx, color, *fixture);
 		}
 		else
 		{
-			RGBW::Rgb_to_Rgbw(color, &_temp_rgbw, _whiteAlgorithm);
-			artnet_packet.Data[dmxIdx++] = _temp_rgbw.red;
-			artnet_packet.Data[dmxIdx++] = _temp_rgbw.green;
-			artnet_packet.Data[dmxIdx++] = _temp_rgbw.blue;
-			artnet_packet.Data[dmxIdx++] = _temp_rgbw.white;
+			// Original behavior
+			if (_whiteAlgorithm == RGBW::WhiteAlgorithm::WHITE_OFF)
+			{
+				artnet_packet.Data[dmxIdx++] = color.red;
+				artnet_packet.Data[dmxIdx++] = color.green;
+				artnet_packet.Data[dmxIdx++] = color.blue;
+			}
+			else
+			{
+				RGBW::Rgb_to_Rgbw(color, &_temp_rgbw, _whiteAlgorithm);
+				artnet_packet.Data[dmxIdx++] = _temp_rgbw.red;
+				artnet_packet.Data[dmxIdx++] = _temp_rgbw.green;
+				artnet_packet.Data[dmxIdx++] = _temp_rgbw.blue;
+				artnet_packet.Data[dmxIdx++] = _temp_rgbw.white;
+			}
+
+			// Skip extra channels if fixture needs more than RGB/RGBW
+			dmxIdx += (_artnet_channelsPerFixture - _ledChannelsPerFixture);
 		}
 
-		// Skip extra channels if fixture needs more than RGB/RGBW
-		dmxIdx += (_artnet_channelsPerFixture - _ledChannelsPerFixture);
+		ledIndex++;
 	}
 
 	// Send the last packet if there's any data

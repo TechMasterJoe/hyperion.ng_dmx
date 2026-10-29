@@ -58,7 +58,38 @@
         ]
       },
       "propertyOrder": 5
-    },    
+    },
+    "customFixtures": {
+      "type": "array",
+      "title": "Custom DMX Fixtures",
+      "access": "expert",
+      "propertyOrder": 7,
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "title": "Fixture name" },
+          "channelCount": { "type": "integer", "minimum": 1, "maximum": 512, "title": "Channel count" },
+          "channelRoles": {
+            "type": "array",
+            "title": "Channel roles (R,G,B,W,H,L,F)",
+            "items": { "type": "string", "enum": ["R", "G", "B", "W", "H", "L", "F"] }
+          },
+          "channelConfig": { "type": "string", "title": "Compact config (e.g. RGBH)" },
+          "fixedValues": {
+            "type": "array",
+            "title": "Fixed values for F/L channels",
+            "items": { "type": "integer", "minimum": 0, "maximum": 255 }
+          }
+        }
+      }
+    },
+    "ledFixtureMap": {
+      "type": "array",
+      "title": "LED to fixture index map (0-based)",
+      "access": "expert",
+      "propertyOrder": 8,
+      "items": { "type": "integer", "minimum": 0 }
+    },
     "latchTime": {
       "type": "integer",
       "title": "edt_dev_spec_latchtime_title",

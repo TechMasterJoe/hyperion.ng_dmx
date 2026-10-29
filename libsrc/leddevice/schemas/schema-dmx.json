@@ -5,13 +5,13 @@
 		"dmxtype": {
 			"type": "string",
 			"title":"edt_dev_spec_ledType_title",
-			"enum" : ["raw", "McCrypt"],
+			"enum" : ["raw", "McCrypt", "custom"],
 			"default" : "raw",
 			"options" : {
-				"enum_titles" : ["Raw", "McCrypt"]
+				"enum_titles" : ["Raw", "McCrypt", "Custom Fixtures"]
 			},
 			"minimum" : 0,
-			"maximum" : 1,
+			"maximum" : 2,
 			"propertyOrder" : 1
 		},
 		"output": {
@@ -63,7 +63,44 @@
 			"minimum": 0,
 			"access" : "expert",
 			"propertyOrder" : 7
-		}		
+		},
+		"whiteAlgorithm": {
+			"type": "string",
+			"title": "White algorithm (for W channels)",
+			"enum": ["white_off", "subtract_minimum", "auto"],
+			"default": "white_off",
+			"access": "expert",
+			"propertyOrder": 8
+		},
+		"customFixtures": {
+			"type": "array",
+			"title": "Custom DMX Fixtures",
+			"access": "expert",
+			"propertyOrder": 9,
+			"items": {
+				"type": "object",
+				"properties": {
+					"name": { "type": "string" },
+					"channelCount": { "type": "integer", "minimum": 1, "maximum": 512 },
+					"channelRoles": {
+						"type": "array",
+						"items": { "type": "string", "enum": ["R", "G", "B", "W", "H", "L", "F"] }
+					},
+					"channelConfig": { "type": "string" },
+					"fixedValues": {
+						"type": "array",
+						"items": { "type": "integer", "minimum": 0, "maximum": 255 }
+					}
+				}
+			}
+		},
+		"ledFixtureMap": {
+			"type": "array",
+			"title": "LED to fixture index map",
+			"access": "expert",
+			"propertyOrder": 10,
+			"items": { "type": "integer", "minimum": 0 }
+		}
 	},
 	"additionalProperties": true
 }

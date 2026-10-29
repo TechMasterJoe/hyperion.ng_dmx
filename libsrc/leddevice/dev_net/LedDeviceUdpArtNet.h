@@ -7,6 +7,8 @@
 #include <QUuid>
 #include <QJsonObject>
 #include <QVector>
+#include <QJsonArray>
+#include <vector>
 
 #include <utils/RgbToRgbw.h>
 
@@ -40,6 +42,17 @@ union artnet_packet_t {
 		uint8_t Data[DMX_MAX];         // The Payload
 	};
 	uint8_t raw[sizeof(struct artnet_header_t) + DMX_MAX];
+};
+
+///
+/// Custom DMX fixture definition
+///
+struct DmxFixture
+{
+	QString name;
+	int channelCount = 3;
+	std::vector<QString> roles;          // "R","G","B","W","H","L","F"
+	std::vector<uint8_t> fixedValues;    // used when role == "F" (or fallback)
 };
 
 ///
@@ -94,6 +107,16 @@ private:
 	///
 	void prepare(unsigned this_universe, unsigned this_sequence, unsigned this_dmxChannelCount);
 
+	///
+	/// @brief Parse custom fixture definitions from config
+	///
+	bool parseCustomFixtures(const QJsonObject &deviceConfig);
+
+	///
+	/// @brief Write one fixture's channels into the DMX buffer
+	///
+	void writeFixtureChannels(uint8_t* dmxData, int& dmxIdx, const ColorRgb& color, const DmxFixture& fixture);
+
 	int _ledChannelsPerFixture = 3;
 
 	artnet_packet_t artnet_packet{};
@@ -104,6 +127,11 @@ private:
 	// RGBW specific members
 	RGBW::WhiteAlgorithm _whiteAlgorithm;
 	ColorRgbw _temp_rgbw{};
+
+	// Custom fixture support
+	bool _useCustomFixtures = false;
+	std::vector<DmxFixture> _fixtures;
+	std::vector<int> _ledFixtureMap;   // index into _fixtures for each Hyperion LED
 };
 
 #endif // LEDEVICEUDPARTNET_H
