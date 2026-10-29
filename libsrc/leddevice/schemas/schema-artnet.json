@@ -62,30 +62,59 @@
     "customFixtures": {
       "type": "array",
       "title": "Custom DMX Fixtures",
+      "description": "Define one or more fixture types. Each Hyperion LED can be assigned a fixture via the LED Fixture Map. Roles: R/G/B/W = color, H = always 255, L = always 0, F = fixed value.",
       "access": "expert",
       "propertyOrder": 7,
+      "options": {
+        "infoText": "Use the visual editor below or edit the JSON. Compact channelConfig (e.g. RGBH) is also accepted."
+      },
       "items": {
         "type": "object",
+        "headerTemplate": "{{self.name}} ({{self.channelCount}} ch)",
         "properties": {
-          "name": { "type": "string", "title": "Fixture name" },
-          "channelCount": { "type": "integer", "minimum": 1, "maximum": 512, "title": "Channel count" },
+          "name": { 
+            "type": "string", 
+            "title": "Fixture name",
+            "description": "Friendly name shown in the UI"
+          },
+          "channelCount": { 
+            "type": "integer", 
+            "minimum": 1, 
+            "maximum": 512, 
+            "title": "Channel count",
+            "default": 4
+          },
           "channelRoles": {
             "type": "array",
-            "title": "Channel roles (R,G,B,W,H,L,F)",
-            "items": { "type": "string", "enum": ["R", "G", "B", "W", "H", "L", "F"] }
+            "title": "Channel roles",
+            "description": "One role per channel. Order matches DMX channels.",
+            "items": { 
+              "type": "string", 
+              "enum": ["R", "G", "B", "W", "H", "L", "F"],
+              "options": {
+                "enum_titles": ["Red", "Green", "Blue", "White", "High (255)", "Low (0)", "Fixed value"]
+              }
+            }
           },
-          "channelConfig": { "type": "string", "title": "Compact config (e.g. RGBH)" },
+          "channelConfig": { 
+            "type": "string", 
+            "title": "Compact config (optional)",
+            "description": "Shorthand like RGBH or RGBW. Overrides channelRoles if set.",
+            "pattern": "^[RGBWHLF]*$"
+          },
           "fixedValues": {
             "type": "array",
-            "title": "Fixed values for F/L channels",
-            "items": { "type": "integer", "minimum": 0, "maximum": 255 }
+            "title": "Fixed values",
+            "description": "Used for F roles (and as fallback). One value per channel.",
+            "items": { "type": "integer", "minimum": 0, "maximum": 255, "default": 0 }
           }
         }
       }
     },
     "ledFixtureMap": {
       "type": "array",
-      "title": "LED to fixture index map (0-based)",
+      "title": "LED to fixture index map",
+      "description": "0-based index into the customFixtures list for each Hyperion LED. If shorter than LED count, the last entry is repeated. Leave empty to use fixture 0 for all.",
       "access": "expert",
       "propertyOrder": 8,
       "items": { "type": "integer", "minimum": 0 }

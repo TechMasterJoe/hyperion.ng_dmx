@@ -1100,6 +1100,11 @@ $(document).ready(function () {
       let colorOrderDefault = "rgb";
       let filter = {};
 
+      // Nicer visual editor for custom DMX fixtures
+      if (ledType === "udpartnet" || ledType === "dmx") {
+        initCustomDmxFixtureEditor();
+      }
+
       $('#btn_layout_controller').hide();
       $('#btn_test_controller').hide();
 
@@ -3019,4 +3024,193 @@ function nanoleafGeneratelayout(panelLayout, panelOrderTopDown, panelOrderLeftRi
     }
   });
   return layoutObjects;
+}
+
+// ============================================================================
+// Custom DMX Fixture Visual Editor
+// ============================================================================
+function initCustomDmxFixtureEditor() {
+  // Remove any previous instance
+  $('#custom_dmx_fixture_editor').remove();
+
+  const container = $('#editor_container_leddevice');
+  const panel = $(`
+    <div id="custom_dmx_fixture_editor" class="panel panel-info" style="margin-top:15px;">
+      <div class="panel-heading">
+        <h4 class="panel-title"><i class="fa fa-sliders"></i> Custom DMX Fixture Editor</h4>
+      </div>
+      <div class="panel-body">
+        <p class="text-muted">Define fixture types visually. Changes are written into the Custom DMX Fixtures field above.</p>
+        <div id="dmx_fixture_list"></div>
+        <button type="button" class="btn btn-success btn-sm" id="btn_add_dmx_fixture"><i class="fa fa-plus"></i> Add Fixture</button>
+        <button type="button" class="btn btn-default btn-sm" id="btn_sync_dmx_fixtures" style="margin-left:8px;"><i class="fa fa-refresh"></i> Sync to config</button>
+        <div id="dmx_fixture_preview" class="well well-sm" style="margin-top:10px; font-family:monospace;"></div>
+      </div>
+    </div>
+  `);
+  container.after(panel);
+
+  const roles = [
+    { value: "R", label: "Red" },
+    { value: "G", label: "Green" },
+    { value: "B", label: "Blue" },
+    { value: "W", label: "White" },
+    { value: "H", label: "High (255)" },
+    { value: "L", label: "Low (0)" },
+    { value: "F", label: "Fixed" }
+  ];
+
+  function roleSelect(selected) {
+    let html = '<select class="form-control input-sm dmx-role" style="width:auto; display:inline-block;">';
+    roles.forEach(r => {
+      html += `<option value="${r.value}" ${r.value === selected ? 'selected' : ''}>${r.label}</option>`;
+    });
+    html += '</select>';
+    return html;
+  }
+
+  function renderFixture(idx, fixture) {
+    const chCount = fixture.channelCount || 4;
+    const rolesArr = fixture.channelRoles || Array(chCount).fill("L");
+    const fixedArr = fixture.fixedValues || Array(chCount).fill(0);
+
+    let channelsHtml = '';
+    for (let i = 0; i < chCount; i++) {
+      const role = rolesArr[i] || "L";
+      const fixed = fixedArr[i] || 0;
+      channelsHtml += `
+        <div class="form-inline" style="margin-bottom:4px;">
+          <label style="width:70px;">Ch ${i + 1}:</label>
+          ${roleSelect(role)}
+          <input type="number" class="form-control input-sm dmx-fixed" min="0" max="255" value="${fixed}" style="width:70px; margin-left:6px;" title="Fixed value (used for F role)">
+        </div>`;
+    }
+
+    return `
+      <div class="panel panel-default dmx-fixture-item" data-idx="${idx}" style="margin-bottom:10px;">
+        <div class="panel-body">
+          <div class="form-inline" style="margin-bottom:8px;">
+            <input type="text" class="form-control input-sm dmx-name" placeholder="Fixture name" value="${fixture.name || 'Fixture ' + (idx + 1)}" style="width:180px;">
+            <label style="margin-left:10px;">Channels:</label>
+            <input type="number" class="form-control input-sm dmx-chcount" min="1" max="32" value="${chCount}" style="width:70px;">
+            <button type="button" class="btn btn-danger btn-xs btn-remove-fixture" style="margin-left:10px;"><i class="fa fa-trash"></i></button>
+          </div>
+          <div class="dmx-channels">${channelsHtml}</div>
+        </div>
+      </div>`;
+  }
+
+  function loadFromEditor() {
+    let fixtures = [];
+    try {
+      const ed = conf_editor.getEditor("root.specificOptions.customFixtures");
+      if (ed) fixtures = ed.getValue() || [];
+    } catch (e) { /* ignore */ }
+
+    const list = $('#dmx_fixture_list');
+    list.empty();
+    fixtures.forEach((f, i) => list.append(renderFixture(i, f)));
+    updatePreview();
+  }
+
+  function collectFixtures() {
+    const fixtures = [];
+    $('#dmx_fixture_list .dmx-fixture-item').each(function () {
+      const $item = $(this);
+      const name = $item.find('.dmx-name').val() || 'Unnamed';
+      const chCount = parseInt($item.find('.dmx-chcount').val(), 10) || 4;
+      const roles = [];
+      const fixed = [];
+      $item.find('.dmx-role').each(function (i) {
+        if (i < chCount) roles.push($(this).val());
+      });
+      $item.find('.dmx-fixed').each(function (i) {
+        if (i < chCount) fixed.push(parseInt($(this).val(), 10) || 0);
+      });
+      // pad if needed
+      while (roles.length < chCount) roles.push("L");
+      while (fixed.length < chCount) fixed.push(0);
+
+      fixtures.push({
+        name: name,
+        channelCount: chCount,
+        channelRoles: roles,
+        fixedValues: fixed
+      });
+    });
+    return fixtures;
+  }
+
+  function syncToEditor() {
+    const fixtures = collectFixtures();
+    try {
+      const ed = conf_editor.getEditor("root.specificOptions.customFixtures");
+      if (ed) {
+        ed.setValue(fixtures);
+        showNotification('success', 'Custom fixtures synced to configuration');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    updatePreview();
+  }
+
+  function updatePreview() {
+    const fixtures = collectFixtures();
+    let html = '<strong>Preview:</strong><br>';
+    if (fixtures.length === 0) {
+      html += '<em>No fixtures defined – falling back to classic channelsPerFixture behavior.</em>';
+    } else {
+      fixtures.forEach((f, i) => {
+        const cfg = (f.channelRoles || []).join('');
+        html += `#${i} <b>${f.name}</b> (${f.channelCount} ch): <code>${cfg}</code><br>`;
+      });
+    }
+    $('#dmx_fixture_preview').html(html);
+  }
+
+  // Events
+  $('#btn_add_dmx_fixture').off().on('click', function () {
+    const idx = $('#dmx_fixture_list .dmx-fixture-item').length;
+    $('#dmx_fixture_list').append(renderFixture(idx, { name: 'New Fixture', channelCount: 4, channelRoles: ['R','G','B','H'], fixedValues: [0,0,0,255] }));
+    updatePreview();
+  });
+
+  $(document).off('click', '#custom_dmx_fixture_editor .btn-remove-fixture').on('click', '#custom_dmx_fixture_editor .btn-remove-fixture', function () {
+    $(this).closest('.dmx-fixture-item').remove();
+    updatePreview();
+  });
+
+  $(document).off('change', '#custom_dmx_fixture_editor .dmx-chcount').on('change', '#custom_dmx_fixture_editor .dmx-chcount', function () {
+    // Re-render channels for this fixture
+    const $item = $(this).closest('.dmx-fixture-item');
+    const chCount = parseInt($(this).val(), 10) || 4;
+    const currentRoles = [];
+    $item.find('.dmx-role').each(function () { currentRoles.push($(this).val()); });
+    const currentFixed = [];
+    $item.find('.dmx-fixed').each(function () { currentFixed.push($(this).val()); });
+
+    let channelsHtml = '';
+    for (let i = 0; i < chCount; i++) {
+      const role = currentRoles[i] || "L";
+      const fixed = currentFixed[i] || 0;
+      channelsHtml += `
+        <div class="form-inline" style="margin-bottom:4px;">
+          <label style="width:70px;">Ch ${i + 1}:</label>
+          ${roleSelect(role)}
+          <input type="number" class="form-control input-sm dmx-fixed" min="0" max="255" value="${fixed}" style="width:70px; margin-left:6px;">
+        </div>`;
+    }
+    $item.find('.dmx-channels').html(channelsHtml);
+    updatePreview();
+  });
+
+  $(document).off('change', '#custom_dmx_fixture_editor .dmx-role, #custom_dmx_fixture_editor .dmx-fixed, #custom_dmx_fixture_editor .dmx-name').on('change', '#custom_dmx_fixture_editor .dmx-role, #custom_dmx_fixture_editor .dmx-fixed, #custom_dmx_fixture_editor .dmx-name', function () {
+    updatePreview();
+  });
+
+  $('#btn_sync_dmx_fixtures').off().on('click', syncToEditor);
+
+  // Initial load
+  loadFromEditor();
 }

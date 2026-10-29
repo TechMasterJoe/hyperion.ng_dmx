@@ -75,20 +75,30 @@
 		"customFixtures": {
 			"type": "array",
 			"title": "Custom DMX Fixtures",
+			"description": "Define fixture types with channel roles. When present, overrides raw/McCrypt packing.",
 			"access": "expert",
 			"propertyOrder": 9,
 			"items": {
 				"type": "object",
+				"headerTemplate": "{{self.name}} ({{self.channelCount}} ch)",
 				"properties": {
-					"name": { "type": "string" },
-					"channelCount": { "type": "integer", "minimum": 1, "maximum": 512 },
+					"name": { "type": "string", "title": "Fixture name" },
+					"channelCount": { "type": "integer", "minimum": 1, "maximum": 512, "title": "Channel count", "default": 4 },
 					"channelRoles": {
 						"type": "array",
-						"items": { "type": "string", "enum": ["R", "G", "B", "W", "H", "L", "F"] }
+						"title": "Channel roles",
+						"items": { 
+							"type": "string", 
+							"enum": ["R", "G", "B", "W", "H", "L", "F"],
+							"options": {
+								"enum_titles": ["Red", "Green", "Blue", "White", "High (255)", "Low (0)", "Fixed value"]
+							}
+						}
 					},
-					"channelConfig": { "type": "string" },
+					"channelConfig": { "type": "string", "title": "Compact config (e.g. RGBH)" },
 					"fixedValues": {
 						"type": "array",
+						"title": "Fixed values",
 						"items": { "type": "integer", "minimum": 0, "maximum": 255 }
 					}
 				}
@@ -97,6 +107,7 @@
 		"ledFixtureMap": {
 			"type": "array",
 			"title": "LED to fixture index map",
+			"description": "0-based index into customFixtures for each LED. Empty = all use fixture 0.",
 			"access": "expert",
 			"propertyOrder": 10,
 			"items": { "type": "integer", "minimum": 0 }
